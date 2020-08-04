@@ -3,16 +3,21 @@ extern crate graphics;
 extern crate opengl_graphics;
 extern crate piston;
 
+use std::collections::VecDeque;
 use glutin_window::GlutinWindow as Window;
 use opengl_graphics::{GlGraphics, OpenGL};
 use piston::event_loop::{EventSettings, Events};
 use piston::input::{RenderArgs, RenderEvent, UpdateEvent, PressEvent};
 use piston::{window::WindowSettings, Button, Key};
+use graphics::{types, rectangle, clear};
 
+#[derive(Clone, Copy, PartialEq)]
 enum Dir { Left, Right, Up, Down }
 
 pub struct App {
     gl: GlGraphics,
+    bends: VecDeque<f64>,
+    size: f64,
     dir: Dir,
     px: f64,
     py: f64
@@ -20,33 +25,42 @@ pub struct App {
 
 impl App {
     fn new(opengl: OpenGL) -> App {
+        let mut vec = VecDeque::new();
+        vec.push_back(50.0);
         App {
             gl: GlGraphics::new(opengl),
+            bends: vec,
+            size: 8.0,
             dir: Dir::Right,
             px: 50.0,
             py: 50.0
         }
     }
-    fn render(&mut self, args: &RenderArgs) {
-        use graphics::*;
 
+    fn render(&mut self, args: &RenderArgs) {
         const GREEN: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
         const RED: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
-        const SIZE: f64 = 20.0;
+        let size: f64 = self.size;
 
-        let square = rectangle::square(0.0, 0.0, SIZE);
-        let (x, y) = (self.px, self.py);
+        let mut prev = (self.px, self.py, self.dir);
+        let rects = self.bends.iter().rev().map(|p| -> types::Rectangle {
+            let next = match prev.2 {
+                Dir::Left | Dir::Right => (*p, prev.1, Dir::Down),
+                Dir::Up | Dir::Down => (prev.0 , *p, Dir::Left)
+            };
+            let rect = get_rect((prev.0, prev.1), (next.0, next.1), size);
+            prev = next;
+            rect
+        });
 
         self.gl.draw(args.viewport(), |c, gl| {
             // Clear the screen.
             clear(GREEN, gl);
 
-            let transform = c
-                .transform
-                .trans(x - SIZE / 2.0, y - SIZE / 2.0);
-
             // Draw a box rotating around the middle of the screen.
-            rectangle(RED, square, transform, gl);
+            for rect in rects {
+                rectangle(RED, rect, c.transform, gl);
+            }
         });
     }
 
@@ -56,8 +70,36 @@ impl App {
             Dir::Up => self.py -= d,
             Dir::Right => self.px += d,
             Dir::Down => self.py += d
-        }
+        };
     }
+
+    fn change_dir(&mut self, to: Dir) {
+        match to {
+            Dir::Left | Dir:: Right => {
+                if self.dir == Dir::Up || self.dir == Dir::Down {
+                    self.bends.push_back(self.px);
+                    self.dir = to;
+                }
+            },
+            Dir::Up | Dir::Down => {
+                if self.dir == Dir::Left || self.dir == Dir::Right {
+                    self.bends.push_back(self.py);
+                    self.dir = to;
+                }
+            }
+        };
+    }
+}
+
+fn get_rect(corner1: (f64, f64), corner2: (f64, f64), size: f64) -> types::Rectangle {
+    let mut shift = (size, size);
+    if corner1.0 > corner2.0 {
+        shift.0 = -size;
+    }
+    if corner1.1 > corner2.1 {
+        shift.1 = -size;
+    }
+    rectangle::rectangle_by_corners(corner1.0 - shift.0 / 2.0, corner1.1 - shift.1 / 2.0, corner2.0 + shift.0 / 2.0, corner2.1 + shift.1 / 2.0)
 }
 
 fn main() {
@@ -85,13 +127,13 @@ fn main() {
         }
 
         if let Some(Button::Keyboard(key)) = e.press_args() {
-            app.dir = match key {
+            app.change_dir(match key {
                 Key::Left => Dir::Left,
                 Key::Up => Dir::Up,
                 Key::Right => Dir::Right,
                 Key::Down => Dir::Down,
                 _ => app.dir
-            }
+            })
         };
 
     }
